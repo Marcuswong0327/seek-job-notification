@@ -1,4 +1,5 @@
 # Crawlee legacy disk storage (no longer used when using in-memory storage)
-server/storage/
 .env
-node_modules
+client/node_modules
+server/node_modules
+
