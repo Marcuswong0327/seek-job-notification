@@ -1,3 +1,4 @@
+// @ts-nocheck
 require("dotenv").config();
 
 // Before any module loads Crawlee: never use ./server/storage (broken KV indexes).
@@ -142,7 +143,7 @@ app.post("/api/extract", async (req, res) => {
   }
 });
 
-const port = process.env.PORT;
+const port = process.env.PORT || 3001;
 app.listen(port, () => {
   console.log(`Server listening on http://localhost:${port}`);
 });

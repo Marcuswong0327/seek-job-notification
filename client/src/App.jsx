@@ -10,7 +10,10 @@ function csvEscape(value) {
 
 /** Build CSV string and trigger download for jobs array. */
 function downloadJobsCsv(jobs, filename = "seek-jobs.csv") {
+
+  // Guard clause
   if (!Array.isArray(jobs) || jobs.length === 0) return;
+  
   const headers = ["Job Title", "Company", "Location", "Salary", "Job Url"];
   const rows = jobs.map((j) =>
     [
@@ -21,6 +24,12 @@ function downloadJobsCsv(jobs, filename = "seek-jobs.csv") {
       csvEscape(j.jobUrl),
     ].join(","),
   );
+
+  //blob = binary large object - convert raw text into a virtual file, 
+  // use URL.creatObjectURL to create a fake web address  for the file 
+  // create invisible HTML link <a> and attach fake web address 
+  // tell browsers to click and download 
+  // URL.revokeObjectURL - delete fake web address from memory, so free resources 
   const csv = [headers.join(","), ...rows].join("\r\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
@@ -33,7 +42,7 @@ function downloadJobsCsv(jobs, filename = "seek-jobs.csv") {
 
 export default function App() {
   const [searchString, setSearchString] = useState("");
-  const [location, setLocation] = useState("New South Wales NSW");
+  const [location, setLocation] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
@@ -43,6 +52,8 @@ export default function App() {
     setError("");
     setResult(null);
 
+    // api/extract is the window to enter into backend 
+    // SEND REQUEST - POST 
     try {
       const res = await fetch("/api/extract", {
         method: "POST",
@@ -50,11 +61,14 @@ export default function App() {
         body: JSON.stringify({ searchString, location }),
       });
 
+      // WAIT FOR RESPONSE 
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Extraction failed");
       setResult(json);
+
+      // DOWNLOAD FILE
       if (Array.isArray(json.jobs) && json.jobs.length > 0) {
-        const name = `seek-jobs-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}.csv`;
+        const name = `seek-jobs-${searchString}-${location}.csv`;
         downloadJobsCsv(json.jobs, name);
       }
     } catch (e) {
@@ -73,7 +87,6 @@ export default function App() {
           <input
             value={searchString}
             onChange={(e) => setSearchString(e.target.value)}
-            placeholder="e.g. fitter"
             style={{ width: "100%", padding: 8, marginTop: 6 }}
           />
         </label>
@@ -82,7 +95,6 @@ export default function App() {
           <input
             value={location}
             onChange={(e) => setLocation(e.target.value)}
-            placeholder="e.g. New South Wales NSW"
             style={{ width: "100%", padding: 8, marginTop: 6 }}
           />
         </label>
