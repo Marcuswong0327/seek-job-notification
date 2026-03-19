@@ -1,5 +1,5 @@
 {
-  "name": "seek-job-notification-2.0",
+  "name": "seek-job-notification",
   "private": true,
   "description": "Run from repo root: npm run dev (API) and npm run client (UI) in two terminals.",
   "scripts": {
