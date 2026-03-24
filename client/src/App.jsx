@@ -1,4 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+
+const LS_FROM = "seekJobEmailFrom";
+const LS_TO = "seekJobEmailRecipients";
+
+const DEFAULT_FROM = "Marcus Wong <marcus.wong@linktal.com.au>";
+const DEFAULT_RECIPIENTS = "marcus.wong@linktal.com.au";
 
 /** Escape a CSV cell (wrap in quotes if contains comma, quote, or newline). */
 function csvEscape(value) {
@@ -14,7 +20,7 @@ function downloadJobsCsv(jobs, filename = "seek-jobs.csv") {
   // Guard clause
   if (!Array.isArray(jobs) || jobs.length === 0) return;
   
-  const headers = ["Job Title", "Company", "Location", "Salary", "Job Url"];
+  const headers = ["Job Title", "Company", "Location", "Salary", "Seek Url"];
   const rows = jobs.map((j) =>
     [
       csvEscape(j.jobTitle),
@@ -40,17 +46,42 @@ function downloadJobsCsv(jobs, filename = "seek-jobs.csv") {
   URL.revokeObjectURL(url);
 }
 
-const DEFAULT_EMAIL_FROM = "Marcus Wong <marcus.wong@linktal.com.au>";
-const DEFAULT_EMAIL_TO = "marcus.wong@linktal.com.au";
-
 export default function App() {
   const [searchString, setSearchString] = useState("");
   const [location, setLocation] = useState("");
-  const [emailFrom, setEmailFrom] = useState(DEFAULT_EMAIL_FROM);
-  const [emailTo, setEmailTo] = useState(DEFAULT_EMAIL_TO);
+  const [emailFrom, setEmailFrom] = useState(() => {
+    try {
+      return localStorage.getItem(LS_FROM) || DEFAULT_FROM;
+    } catch {
+      return DEFAULT_FROM;
+    }
+  });
+  const [emailRecipients, setEmailRecipients] = useState(() => {
+    try {
+      return localStorage.getItem(LS_TO) || DEFAULT_RECIPIENTS;
+    } catch {
+      return DEFAULT_RECIPIENTS;
+    }
+  });
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_FROM, emailFrom);
+    } catch {
+      /* ignore */
+    }
+  }, [emailFrom]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_TO, emailRecipients);
+    } catch {
+      /* ignore */
+    }
+  }, [emailRecipients]);
 
   async function onExtract() {
     setLoading(true);
@@ -66,15 +97,17 @@ export default function App() {
         body: JSON.stringify({
           searchString,
           location,
-          emailFrom: emailFrom.trim() || undefined,
-          emailTo: emailTo.trim() || undefined,
+          emailFrom: emailFrom.trim(),
+          emailTo: emailRecipients,
         }),
       });
 
       // WAIT FOR RESPONSE 
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Extraction failed");
-      setResult(json);
+      if (!res.ok) {
+        throw new Error(json.error || "Extraction failed");
+      }
+        setResult(json);
 
       // DOWNLOAD FILE
       if (Array.isArray(json.jobs) && json.jobs.length > 0) {
@@ -109,43 +142,34 @@ export default function App() {
           />
         </label>
 
-        <fieldset
-          style={{
-            border: "1px solid #ccc",
-            borderRadius: 8,
-            padding: 12,
-            margin: 0,
-          }}
-        >
+        <fieldset>
           <legend>Email Notification</legend>
-          <label style={{ display: "block", marginBottom: 10 }}>
+          <label style={{ display: "block" }}>
             Sender (From)
             <input
               value={emailFrom}
               onChange={(e) => setEmailFrom(e.target.value)}
-              placeholder='e.g. Marcus Wong <marcus.wong@linktal.com.au>'
+              placeholder='Marcus Wong <marcus.wong@linktal.com.au>'
               style={{ width: "100%", padding: 8, marginTop: 6 }}
             />
           </label>
-          <label style={{ display: "block" }}>
-            Recipients (To) - Max 50 recipients per email
+          <label style={{ display: "block", marginTop: 10 }}>
+            Recipients (To) - use comma to separete, max 50 recipients per email
             <textarea
-              value={emailTo}
-              onChange={(e) => setEmailTo(e.target.value)}
-              placeholder="marcus.wong@linktal.com.au, two@example.com"
+              value={emailRecipients}
+              onChange={(e) => setEmailRecipients(e.target.value)}
+              placeholder="one@linktal.com.au, two@example.com"
               rows={3}
               style={{
                 width: "100%",
                 padding: 8,
-                marginTop: 6,
-                fontFamily: "inherit",
-                resize: "vertical",
+                marginTop: 6
               }}
             />
           </label>
         </fieldset>
 
-        <button onClick={onExtract} disabled={loading || !searchString}>
+        <button onClick={onExtract} disabled={loading || !searchString || !location}>
           {loading ? "Extracting..." : "Extract jobs"}
         </button>
       </div>
