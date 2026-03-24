@@ -40,9 +40,14 @@ function downloadJobsCsv(jobs, filename = "seek-jobs.csv") {
   URL.revokeObjectURL(url);
 }
 
+const DEFAULT_EMAIL_FROM = "Marcus Wong <marcus.wong@linktal.com.au>";
+const DEFAULT_EMAIL_TO = "marcus.wong@linktal.com.au";
+
 export default function App() {
   const [searchString, setSearchString] = useState("");
   const [location, setLocation] = useState("");
+  const [emailFrom, setEmailFrom] = useState(DEFAULT_EMAIL_FROM);
+  const [emailTo, setEmailTo] = useState(DEFAULT_EMAIL_TO);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
@@ -58,7 +63,12 @@ export default function App() {
       const res = await fetch("/api/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ searchString, location }),
+        body: JSON.stringify({
+          searchString,
+          location,
+          emailFrom: emailFrom.trim() || undefined,
+          emailTo: emailTo.trim() || undefined,
+        }),
       });
 
       // WAIT FOR RESPONSE 
@@ -98,6 +108,43 @@ export default function App() {
             style={{ width: "100%", padding: 8, marginTop: 6 }}
           />
         </label>
+
+        <fieldset
+          style={{
+            border: "1px solid #ccc",
+            borderRadius: 8,
+            padding: 12,
+            margin: 0,
+          }}
+        >
+          <legend>Email Notification</legend>
+          <label style={{ display: "block", marginBottom: 10 }}>
+            Sender (From)
+            <input
+              value={emailFrom}
+              onChange={(e) => setEmailFrom(e.target.value)}
+              placeholder='e.g. Marcus Wong <marcus.wong@linktal.com.au>'
+              style={{ width: "100%", padding: 8, marginTop: 6 }}
+            />
+          </label>
+          <label style={{ display: "block" }}>
+            Recipients (To) - Max 50 recipients per email
+            <textarea
+              value={emailTo}
+              onChange={(e) => setEmailTo(e.target.value)}
+              placeholder="marcus.wong@linktal.com.au, two@example.com"
+              rows={3}
+              style={{
+                width: "100%",
+                padding: 8,
+                marginTop: 6,
+                fontFamily: "inherit",
+                resize: "vertical",
+              }}
+            />
+          </label>
+        </fieldset>
+
         <button onClick={onExtract} disabled={loading || !searchString}>
           {loading ? "Extracting..." : "Extract jobs"}
         </button>

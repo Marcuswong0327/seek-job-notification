@@ -39,15 +39,32 @@ function buildJobsCsv(jobs) {
   return [headers.join(","), ...rows].join("\r\n");
 }
 
+/** Split comma/newline/semicolon-separated emails into a unique trimmed list. */
+function parseRecipientList(value, envFallback) {
+  const raw =
+    value !== undefined && value !== null && String(value).trim() !== ""
+      ? value
+      : envFallback || "";
+  const parts = Array.isArray(raw)
+    ? raw.flatMap((x) => String(x).split(/[,\n;]+/))
+    : String(raw).split(/[,\n;]+/);
+  return [...new Set(parts.map((e) => e.trim()).filter(Boolean))];
+}
+
+function isLooseValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email).trim());
+}
+
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-// Body: { searchString: string, location: string }
+// Body: { searchString, location, emailFrom?, emailTo? | emailRecipients? }
 app.post("/api/extract", async (req, res) => {
-  const { searchString, location } = req.body || {};
+  const { searchString, location, emailFrom, emailTo, emailRecipients } =
+    req.body || {};
   if (!searchString || typeof searchString !== "string") {
     return res.status(400).json({ error: "search String is required" });
   }
@@ -58,6 +75,23 @@ app.post("/api/extract", async (req, res) => {
   console.log(
     `[api/extract] searchString="${searchString}" location="${normalizedLocation}"`,
   );
+
+
+  const resolvedFrom =
+    (typeof emailFrom === "string" && emailFrom.trim()) || "Marcus Wong <marcus.wong@linktal.com.au>";
+  const recipientList = parseRecipientList(emailTo !== undefined ? emailTo : emailRecipients);
+    
+  const invalidRecipients = recipientList.filter((e) => !isLooseValidEmail(e));
+  if (invalidRecipients.length > 0) {
+    return res.status(400).json({
+      error: `Invalid recipient email(s): ${invalidRecipients.join(", ")}`,
+    });
+  }
+  if (recipientList.length > 50) {
+    return res.status(400).json({
+      error: "Too many recipients (Resend allows max 50 per email).",
+    });
+  }
 
   try {
     const headless = process.env.PLAYWRIGHT_HEADLESS !== "false";
@@ -73,6 +107,7 @@ app.post("/api/extract", async (req, res) => {
       Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
 
     let insertedOrUpdated = null;
+    let scrapeRunId = null;
     if (supabaseEnabled) {
       const supabase = getSupabase();
       const payload = jobs.map((j) => ({
@@ -83,22 +118,51 @@ app.post("/api/extract", async (req, res) => {
         job_url: j.jobUrl,
       }));
 
-      const { data, error } = await supabase
-        .from("seek_jobs")
-        .upsert(payload, { onConflict: "job_url" })
-        .select();
+      let data = null;
+      if (payload.length > 0) {
+        const upsertResult = await supabase
+          .from("seek_jobs")
+          .upsert(payload)
+          .select();
+        if (upsertResult.error) throw upsertResult.error;
+        data = upsertResult.data;
+      }
+      
+      console.log("Data: ",data);
+      console.log("Payload: ",payload);
+      console.log("Upsert Result: ", upsertResult);
 
-      if (error) throw error;
-      insertedOrUpdated = data?.length || 0;
+      insertedOrUpdated = data?.length ?? 0;
+
+      // Per-run analytics row (backtest / performance). Does not fail the API if insert fails.
+      const runPayload = {
+        search_string: searchString,
+        location: normalizedLocation || null,
+        // Pre-final-dedupe count from scraper (vs jobs.length after uniqueByJobUrl).
+        ui_reported_count:
+          typeof debug?.scrapedJobsPreDedup === "number"
+            ? debug.scrapedJobsPreDedup
+            : null,
+        final_returned_count: jobs.length,
+        inserted_or_updated: insertedOrUpdated,
+        run_id: debug?.runId ?? null,
+        debug: debug ?? null,
+      };
+      const { data: runRow, error: runError } = await supabase
+        .from("seek_scrape_runs")
+        .insert(runPayload)
+        .select("id")
+        .single();
+      if (runError) {
+        // eslint-disable-next-line no-console
+        console.error("[api/extract] seek_scrape_runs insert failed:", runError);
+      } else {
+        scrapeRunId = runRow?.id ?? null;
+      }
     }
 
     let emailSent = null;
     const resendKey = process.env.RESEND_API_KEY?.trim();
-    const toEmail =
-      process.env.SEEK_JOBS_RECIPIENT_EMAIL?.trim() ||
-      "marcus.wong@linktal.com.au";
-    const fromEmail =
-      process.env.RESEND_FROM?.trim() || "Seek Jobs <onboarding@resend.dev>";
 
     if (resendKey && jobs.length > 0) {
       try {
@@ -106,8 +170,8 @@ app.post("/api/extract", async (req, res) => {
         const csv = buildJobsCsv(jobs);
         const filename = `seek-jobs-${Date.now()}.csv`;
         const { error: emailError } = await resend.emails.send({
-          from: fromEmail,
-          to: [toEmail],
+          from: resolvedFrom,
+          to: recipientList,
           subject: `Seek jobs export (${jobs.length} jobs)`,
           text: `Attached CSV with ${jobs.length} jobs from Seek.`,
           attachments: [
@@ -136,6 +200,7 @@ app.post("/api/extract", async (req, res) => {
       insertedOrUpdated,
       jobs,
       debug,
+      ...(scrapeRunId && { scrapeRunId }),
       ...(emailSent !== null && { emailSent }),
     });
   } catch (e) {
