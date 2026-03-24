@@ -35,6 +35,7 @@ function uniqueByJobUrl(jobs) {
   return out;
 }
 
+// Entry point for scraping Seek jobs
 async function scrapeSeekJobs({ searchString, location, headless }) {
   const qSlug = encodeURIComponent(searchString);
   const rawLocation = (location || "").trim();
@@ -49,7 +50,7 @@ async function scrapeSeekJobs({ searchString, location, headless }) {
 
   const url = locationSlug
     ? `https://www.seek.com.au/${qSlug}-jobs/in-${encodeURIComponent(locationSlug)}`
-    : `https://www.seek.com.au/${qSlug}-jobs`;
+    : undefined;
 
   const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
   const localDataDirectory = path.join(
@@ -77,17 +78,15 @@ async function scrapeSeekJobs({ searchString, location, headless }) {
     localDataDirectory,
     pagesVisited: 0,
     nextClicks: 0,
-    scrapedJobsPreDedup: 0,
-    scrapedJobsPostDedup: 0,
-    error: null,
-    finalUrl: null,
-    initialJobTitles: 0,
+    scrapedJobsBeforeDedup: 0,
+    scrapedJobsAfterDedup: 0,
+    error: null
   };
 
   const extractJobsFromCurrentDom = async (page) => {
     return page.evaluate(() => {
       const out = [];
-      const uniqueCards = new Set();
+      const uniqueCards = new Set(); // detecting duplicate cards!!!
       const titleLinks = [
         ...document.querySelectorAll(
           'a[data-automation="jobTitle"], [data-testid="job-title"] a, h3 a[href*="/job/"], h2 a[href*="/job/"]',
@@ -100,6 +99,7 @@ async function scrapeSeekJobs({ searchString, location, headless }) {
         const card = getCard(n);
         if (!card) continue;
         if (uniqueCards.has(card)) continue;
+
         uniqueCards.add(card);
 
         const jobData = {
@@ -216,6 +216,25 @@ async function scrapeSeekJobs({ searchString, location, headless }) {
     });
   };
 
+  
+  // Implement scrolling feature to load more cards
+  const warmUpLazyLoadedCards = async (page, pageIndex) => {
+    const scrollRounds = 5;
+    for (let i = 0; i < scrollRounds; i++) {
+      await page.evaluate(() => window.scrollBy(0, Math.floor(window.innerHeight * 0.9)));
+      await page.waitForTimeout(400);
+    }
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.waitForTimeout(400);
+    const titleLinks = await page
+      .$$eval('a[data-automation="jobTitle"]', (els) => els.length)
+      .catch(() => 0);
+    // eslint-disable-next-line no-console
+    console.log(
+      `[scrapeSeekJobs/crawlee] runId=${runId} lazyLoad pageIndex=${pageIndex} scrollRounds=${scrollRounds} titleLinks=${titleLinks}`,
+    );
+  };
+
   const crawler = new PlaywrightCrawler(
     {
       maxRequestsPerCrawl: 1,
@@ -229,8 +248,13 @@ async function scrapeSeekJobs({ searchString, location, headless }) {
       launchContext: {
         launchOptions: { headless: headless !== false },
       },
+      preNavigationHooks: [
+        async (_ctx, gotoOptions) => {
+          gotoOptions.waitUntil = "networkidle";
+        },
+      ],
       async requestHandler({ page }) {
-        await page.setViewportSize({ width: 1366, height: 768 });
+        await page.setViewportSize({ width: 1920, height: 1080 });
         // eslint-disable-next-line no-console
         console.log(`[scrapeSeekJobs/crawlee] runId=${runId} url="${url}"`);
 
@@ -260,6 +284,7 @@ async function scrapeSeekJobs({ searchString, location, headless }) {
         const maxPages = 80;
         for (let pageIndex = 0; pageIndex < maxPages; pageIndex++) {
           debug.pagesVisited = pageIndex + 1;
+          await warmUpLazyLoadedCards(page, pageIndex);
           const jobsOnPage = await extractJobsFromCurrentDom(page);
           let newCount = 0;
           for (const j of jobsOnPage) {
@@ -352,8 +377,8 @@ async function scrapeSeekJobs({ searchString, location, headless }) {
     })),
   ).filter((j) => j.jobUrl);
 
-  debug.scrapedJobsPreDedup = results.length;
-  debug.scrapedJobsPostDedup = cleaned.length;
+  debug.scrapedJobsBeforeDedup = results.length;
+  debug.scrapedJobsAfterDedup = cleaned.length;
   return { jobs: cleaned, debug };
 }
 
